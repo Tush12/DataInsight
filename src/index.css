@@ -1,0 +1,105 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 84% 60%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 84% 60%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 84% 60%;
+    --primary: 0 84% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 96%;
+    --secondary-foreground: 0 84% 60%;
+    --muted: 0 0% 96%;
+    --muted-foreground: 0 84% 60%;
+    --accent: 0 84% 60%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 89%;
+    --input: 0 0% 89%;
+    --ring: 0 84% 60%;
+    --radius: 0.75rem;
+    --data-primary: 0 84% 60%;
+    --data-primary-foreground: 0 0% 100%;
+    --data-secondary: 0 0% 15%;
+    --data-secondary-foreground: 0 0% 100%;
+    --data-success: 0 84% 60%;
+    --data-warning: 0 84% 60%;
+    --data-danger: 0 84% 60%;
+    --data-match: 0 84% 60%;
+    --data-mismatch: 0 84% 60%;
+    --gradient-primary: linear-gradient(135deg, hsl(var(--data-primary)), hsl(0 80 40));
+    --gradient-hero: linear-gradient(135deg, hsl(var(--data-primary)), hsl(0 80 30));
+    --gradient-subtle: linear-gradient(180deg, hsl(var(--background)), hsl(15 15 15));
+    --shadow-soft: 0 1px 3px 0 hsl(var(--foreground) / 0.1), 0 1px 2px 0 hsl(var(--foreground) / 0.06);
+    --shadow-medium: 0 4px 6px -1px hsl(var(--foreground) / 0.1), 0 2px 4px -1px hsl(var(--foreground) / 0.06);
+    --shadow-large: 0 10px 15px -3px hsl(var(--foreground) / 0.1), 0 4px 6px -2px hsl(var(--foreground) / 0.05);
+    --shadow-glow: 0 0 40px hsl(var(--data-primary) / 0.3);
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-spring: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 0 84% 60%;
+    --sidebar-primary: 0 84% 60%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 0 0% 95%;
+    --sidebar-accent-foreground: 0 84% 60%;
+    --sidebar-border: 0 0% 91%;
+    --sidebar-ring: 0 84% 60%;
+  }
+
+  .dark {
+    --background: 0 0% 0%;
+    --foreground: 0 0% 100%;
+    --card: 0 0% 0%;
+    --card-foreground: 0 0% 100%;
+    --popover: 0 0% 0%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 0 84% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 14%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 0 0% 14%;
+    --muted-foreground: 0 0% 100%;
+    --accent: 0 84% 60%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 14%;
+    --input: 0 0% 14%;
+    --ring: 0 84% 60%;
+    --data-primary: 0 84% 60%;
+    --data-secondary: 0 0% 85%;
+    --data-success: 0 84% 60%;
+    --data-warning: 0 84% 60%;
+    --data-danger: 0 84% 60%;
+    --gradient-hero: linear-gradient(135deg, hsl(var(--data-primary)), hsl(var(--data-secondary)));
+    --shadow-glow: 0 0 40px hsl(var(--data-primary) / 0.5);
+    --sidebar-background: 0 0% 10%;
+    --sidebar-foreground: 0 0% 95%;
+    --sidebar-primary: 0 84% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 0% 15%;
+    --sidebar-accent-foreground: 0 0% 95%;
+    --sidebar-border: 0 0% 15%;
+    --sidebar-ring: 0 84% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
