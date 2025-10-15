@@ -1,3 +1,7 @@
+// server.js
+// ESM-friendly Express + mssql backend
+// Works on Render. Exposes /api/database/test-connection and /api/database/execute-query
+
 import express from 'express';
 import cors from 'cors';
 import sql from 'mssql';
@@ -10,121 +14,171 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware
+// -------- Middleware --------
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
-// Store active connections
+// Optional: restrict CORS in prod by setting ALLOWED_ORIGINS
+// Example: ALLOWED_ORIGINS="https://your-frontend.vercel.app,https://your-domain.com"
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+if (ALLOWED_ORIGINS.length > 0) {
+  app.use(
+    cors({
+      origin: (origin, cb) => {
+        if (!origin) return cb(null, true);
+        if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+        return cb(new Error('Not allowed by CORS'));
+      },
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization']
+    })
+  );
+}
+
+// -------- Active connections (optional reuse) --------
 const connections = new Map();
 
-// Test database connection
+// Build mssql config safely
+function buildConfig({ server, database, username, password, authType, port = 1433 }) {
+  if (!server) throw new Error('server is required');
+  const cfg = {
+    server: server,
+    database: database || 'master',
+    port: Number.parseInt(port, 10) || 1433,
+    options: {
+      encrypt: false,                // set to true if your SQL requires TLS
+      trustServerCertificate: true,  // true works for most on-prem SQL
+      enableArithAbort: true,
+      connectTimeout: 30000,
+      requestTimeout: 30000
+    },
+    pool: {
+      max: 5,
+      min: 0,
+      idleTimeoutMillis: 30000
+    }
+  };
+
+  if (authType === 'windows') {
+    // Note: Windows/SSPI auth generally does NOT work on Linux hosts like Render.
+    // Keeping the flag for compatibility, but you likely need SQL auth on Render.
+    cfg.options.trustedConnection = true;
+  } else {
+    cfg.user = username;
+    cfg.password = password;
+  }
+
+  return cfg;
+}
+
+// Create, use, and close a pool
+async function withPool(cfg, fn) {
+  const pool = new sql.ConnectionPool(cfg);
+  try {
+    await pool.connect();
+    const out = await fn(pool);
+    await pool.close();
+    return out;
+  } catch (err) {
+    try { await pool.close(); } catch {}
+    throw err;
+  }
+}
+
+// -------- Routes --------
+
+// Health check
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
+// Test database connection and list DBs + tables
 app.post('/api/database/test-connection', async (req, res) => {
   try {
-    const { server, database, username, password, authType, port = 1433 } = req.body;
-    
-    console.log('Connection attempt:', { server, database, username, authType, port });
-    
-    const config = {
-      server: server,
-      port: parseInt(port),
-      database: database || 'master',
-      user: username,
-      password: password,
-      options: {
-        encrypt: false,
-        trustServerCertificate: true,
-        enableArithAbort: true,
-        instanceName: '',
-        connectTimeout: 30000,
-        requestTimeout: 30000
-      }
-    };
+    const { server, database, username, password, authType, port } = req.body;
 
-    if (authType === 'windows') {
-      config.options.trustedConnection = true;
-      delete config.user;
-      delete config.password;
-    }
+    const cfg = buildConfig({ server, database, username, password, authType, port });
 
-    // Test connection
-    const pool = await sql.connect(config);
-    
-    // Get list of available databases
-    const dbResult = await pool.request().query(`
-      SELECT name 
-      FROM sys.databases 
-      WHERE database_id > 4 
-      ORDER BY name
-    `);
-    
-    const databases = dbResult.recordset.map(row => row.name);
-    
-    // Get list of tables from the specified database with schema information
-    let tables = [];
-    if (database && database !== 'master') {
-      try {
-        const tableResult = await pool.request().query(`
-          USE [${database}];
-          SELECT 
-            TABLE_SCHEMA,
-            TABLE_NAME,
-            CONCAT(TABLE_SCHEMA, '.', TABLE_NAME) as FULL_NAME
-          FROM INFORMATION_SCHEMA.TABLES 
-          WHERE TABLE_TYPE = 'BASE TABLE'
-          ORDER BY TABLE_SCHEMA, TABLE_NAME
-        `);
-        tables = tableResult.recordset.map(row => ({
-          name: row.TABLE_NAME,
-          schema: row.TABLE_SCHEMA,
-          fullName: row.FULL_NAME
-        }));
-      } catch (error) {
-        console.log('Could not get tables from specific database, trying master:', error.message);
-        // Fallback to master database tables
-        const masterResult = await pool.request().query(`
-          SELECT 
-            TABLE_SCHEMA,
-            TABLE_NAME,
-            CONCAT(TABLE_SCHEMA, '.', TABLE_NAME) as FULL_NAME
-          FROM INFORMATION_SCHEMA.TABLES 
-          WHERE TABLE_TYPE = 'BASE TABLE'
-          ORDER BY TABLE_SCHEMA, TABLE_NAME
-        `);
-        tables = masterResult.recordset.map(row => ({
-          name: row.TABLE_NAME,
-          schema: row.TABLE_SCHEMA,
-          fullName: row.FULL_NAME
-        }));
-      }
-    } else {
-      // Get tables from master database
-      const masterResult = await pool.request().query(`
-        SELECT 
-          TABLE_SCHEMA,
-          TABLE_NAME,
-          CONCAT(TABLE_SCHEMA, '.', TABLE_NAME) as FULL_NAME
-        FROM INFORMATION_SCHEMA.TABLES 
-        WHERE TABLE_TYPE = 'BASE TABLE'
-        ORDER BY TABLE_SCHEMA, TABLE_NAME
+    const info = await withPool(cfg, async (pool) => {
+      // List user databases
+      const dbResult = await pool.request().query(`
+        SELECT name 
+        FROM sys.databases 
+        WHERE database_id > 4 
+        ORDER BY name
       `);
-      tables = masterResult.recordset.map(row => ({
-        name: row.TABLE_NAME,
-        schema: row.TABLE_SCHEMA,
-        fullName: row.FULL_NAME
-      }));
-    }
-    
-    // Store connection for later use
-    const connectionId = `${server}_${database}_${Date.now()}`;
-    connections.set(connectionId, pool);
-    
+      const databases = dbResult.recordset.map(r => r.name);
+
+      // Try to grab tables from the specified database, fallback to current DB
+      let tables = [];
+      try {
+        if (database && database !== 'master') {
+          const tableResult = await pool.request().query(`
+            USE [${database}];
+            SELECT 
+              TABLE_SCHEMA,
+              TABLE_NAME,
+              CONCAT(TABLE_SCHEMA, '.', TABLE_NAME) AS FULL_NAME
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_TYPE = 'BASE TABLE'
+            ORDER BY TABLE_SCHEMA, TABLE_NAME
+          `);
+          tables = tableResult.recordset.map(row => ({
+            name: row.TABLE_NAME,
+            schema: row.TABLE_SCHEMA,
+            fullName: row.FULL_NAME
+          }));
+        } else {
+          const masterResult = await pool.request().query(`
+            SELECT 
+              TABLE_SCHEMA,
+              TABLE_NAME,
+              CONCAT(TABLE_SCHEMA, '.', TABLE_NAME) AS FULL_NAME
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_TYPE = 'BASE TABLE'
+            ORDER BY TABLE_SCHEMA, TABLE_NAME
+          `);
+          tables = masterResult.recordset.map(row => ({
+            name: row.TABLE_NAME,
+            schema: row.TABLE_SCHEMA,
+            fullName: row.FULL_NAME
+          }));
+        }
+      } catch (e) {
+        // Fallback if USE fails
+        const fallback = await pool.request().query(`
+          SELECT 
+            TABLE_SCHEMA,
+            TABLE_NAME,
+            CONCAT(TABLE_SCHEMA, '.', TABLE_NAME) AS FULL_NAME
+          FROM INFORMATION_SCHEMA.TABLES
+          WHERE TABLE_TYPE = 'BASE TABLE'
+          ORDER BY TABLE_SCHEMA, TABLE_NAME
+        `);
+        tables = fallback.recordset.map(row => ({
+          name: row.TABLE_NAME,
+          schema: row.TABLE_SCHEMA,
+          fullName: row.FULL_NAME
+        }));
+      }
+
+      return { databases, tables };
+    });
+
+    // Store a connection id (note: we closed the pool above to avoid leaks)
+    const connectionId = `${server}_${database || 'master'}_${Date.now()}`;
+    connections.set(connectionId, { lastSeen: Date.now(), cfg });
+
     res.json({
       success: true,
-      tables,
-      databases,
+      databases: info.databases,
+      tables: info.tables,
       connectionId
     });
-    
   } catch (error) {
     console.error('Database connection error:', error);
     res.status(400).json({
@@ -134,48 +188,30 @@ app.post('/api/database/test-connection', async (req, res) => {
   }
 });
 
-// Execute query
+// Execute arbitrary query
+// Body: { connection: { server, database, username, password, authType, port }, query: "SELECT ..." }
 app.post('/api/database/execute-query', async (req, res) => {
   try {
-    const { connection, query } = req.body;
-    
-    // Create new connection for this query
-    const config = {
-      server: connection.server,
-      port: parseInt(connection.port || 1433),
-      database: connection.database || 'master',
-      user: connection.username,
-      password: connection.password,
-      options: {
-        encrypt: false,
-        trustServerCertificate: true,
-        enableArithAbort: true,
-        instanceName: '',
-        connectTimeout: 30000,
-        requestTimeout: 30000
-      }
-    };
-
-    if (connection.authType === 'windows') {
-      config.options.trustedConnection = true;
-      delete config.user;
-      delete config.password;
+    const { connection, query } = req.body || {};
+    if (!connection || !query) {
+      return res.status(400).json({ success: false, message: "connection and query are required" });
     }
 
+    const cfg = buildConfig(connection);
     const startTime = Date.now();
-    const pool = await sql.connect(config);
-    const result = await pool.request().query(query);
+
+    const result = await withPool(cfg, async (pool) => {
+      return pool.request().query(query);
+    });
+
     const executionTime = Date.now() - startTime;
-    
-    await pool.close();
-    
     res.json({
-      data: result.recordset,
-      columns: result.recordset.columns ? Object.keys(result.recordset.columns) : [],
-      rowCount: result.recordset.length,
+      success: true,
+      data: result.recordset || [],
+      columns: result.recordset?.columns ? Object.keys(result.recordset.columns) : [],
+      rowCount: Array.isArray(result.recordset) ? result.recordset.length : 0,
       executionTime
     });
-    
   } catch (error) {
     console.error('Query execution error:', error);
     res.status(400).json({
@@ -185,36 +221,26 @@ app.post('/api/database/execute-query', async (req, res) => {
   }
 });
 
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
-});
-
-// Serve static files in production
+// -------- Static (optional; only if you build a frontend here) --------
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, 'dist')));
-  
-  app.get('*', (req, res) => {
+  app.get('*', (_req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
   });
 }
 
+// -------- Start --------
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
-// Graceful shutdown
+// -------- Graceful shutdown --------
 process.on('SIGINT', async () => {
   console.log('Shutting down server...');
-  
-  // Close all database connections
-  for (const [id, pool] of connections) {
-    try {
-      await pool.close();
-    } catch (error) {
-      console.error(`Error closing connection ${id}:`, error);
+  for (const [id, entry] of connections) {
+    if (entry?.pool) {
+      try { await entry.pool.close(); } catch (e) { console.error(`Error closing pool ${id}:`, e); }
     }
   }
-  
   process.exit(0);
 });
