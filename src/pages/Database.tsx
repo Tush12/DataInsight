@@ -34,6 +34,15 @@ interface QueryResult {
 
 const BASE = import.meta.env.VITE_API_BASE || '';
 
+const buildConnectionPayload = (conn: DatabaseConnection & { user?: string }) => ({
+  server: conn.server?.trim(),
+  database: conn.database?.trim() || 'master',
+  username: conn.username ?? conn.user,
+  password: conn.password,
+  authType: (conn.authType || 'sql').toLowerCase(),
+  port: Number(conn.port) || 1433
+});
+
 const Database = () => {
   const [connection, setConnection] = useState<DatabaseConnection>({
     server: '',
@@ -91,10 +100,10 @@ const Database = () => {
     if (!isConnected) return;
     
     try {
-      const response = await fetch('/api/database/test-connection', {
+      const response = await fetch(`${BASE}/api/database/test-connection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...connection, database: databaseName })
+        body: JSON.stringify(buildConnectionPayload({ ...connection, database: databaseName }))
       });
       
       if (response.ok) {
@@ -147,19 +156,10 @@ const Database = () => {
     try {
       console.log('Sending connection data:', connection);
 
-      const payload = {
-        server: connection.server?.trim(),
-        database: connection.database?.trim() || 'master',
-        username: connection.username ?? (connection as any).user,
-        password: connection.password,
-        authType: (connection.authType || 'sql').toLowerCase(),
-        port: Number(connection.port) || 1433
-      };
-
       const response = await fetch(`${BASE}/api/database/test-connection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(buildConnectionPayload(connection))
       });
       
       if (response.ok) {
@@ -198,11 +198,11 @@ const Database = () => {
         throw new Error('Please select a table or enter a custom query');
       }
       
-      const response = await fetch('/api/database/execute-query', {
+      const response = await fetch(`${BASE}/api/database/execute-query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          connection,
+          connection: buildConnectionPayload(connection),
           query
         })
       });
@@ -247,11 +247,11 @@ const Database = () => {
         throw new Error('Please select a table or enter a custom query');
       }
       
-      const response = await fetch('/api/database/execute-query', {
+      const response = await fetch(`${BASE}/api/database/execute-query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          connection,
+          connection: buildConnectionPayload(connection),
           query
         })
       });
