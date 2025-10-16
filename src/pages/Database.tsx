@@ -32,11 +32,13 @@ interface QueryResult {
   executionTime: number;
 }
 
+const BASE = import.meta.env.VITE_API_BASE || '';
+
 const Database = () => {
   const [connection, setConnection] = useState<DatabaseConnection>({
     server: '',
     database: '',
-    authType: 'windows',
+    authType: 'sql',
     port: 1433
   });
   const [isConnected, setIsConnected] = useState(false);
@@ -144,11 +146,20 @@ const Database = () => {
     
     try {
       console.log('Sending connection data:', connection);
-      // This would call your backend API
-      const response = await fetch('/api/database/test-connection', {
+
+      const payload = {
+        server: connection.server?.trim(),
+        database: connection.database?.trim() || 'master',
+        username: connection.username ?? (connection as any).user,
+        password: connection.password,
+        authType: (connection.authType || 'sql').toLowerCase(),
+        port: Number(connection.port) || 1433
+      };
+
+      const response = await fetch(`${BASE}/api/database/test-connection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(connection)
+        body: JSON.stringify(payload)
       });
       
       if (response.ok) {
