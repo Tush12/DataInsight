@@ -1,6 +1,6 @@
 // server.js
-// ESM-friendly Express + mssql backend (Render)
-// Exposes: /api/health, /api/database/test-connection, /api/database/execute-query
+// Express + mssql API for Render
+// Routes: /api/health, /api/database/test-connection, /api/database/execute-query
 
 import express from 'express';
 import cors from 'cors';
@@ -14,51 +14,78 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// ---------- CORS & JSON ----------
+/* --------------------------- CORS & JSON --------------------------- */
+// Allow explicit ALLOWED_ORIGINS (comma-separated) and optionally *.vercel.app previews
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
 
-// Allow all when no whitelist; otherwise restrict
-if (ALLOWED_ORIGINS.length === 0) {
-  app.use(cors());
-} else {
-  app.use(cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
-      if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
-      return cb(new Error('Not allowed by CORS'));
-    },
-    methods: ['GET','POST','PUT','DELETE','OPTIONS'],
-    allowedHeaders: ['Content-Type','Authorization'],
-  }));
-}
+const allowVercelWildcard = true; // set false if you want strict allow-list
+
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true; // curl / server-to-server / same-origin
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
+  if (allowVercelWildcard && /^https:\/\/.*\.vercel\.app$/.test(origin)) return true;
+  return ALLOWED_ORIGINS.length === 0; // permissive if no allow-list set
+};
+
+app.use(
+  cors({
+    origin: (origin, cb) => (isAllowedOrigin(origin) ? cb(null, true) : cb(new Error('Not allowed by CORS'))),
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
+);
+
 app.use(express.json({ limit: '1mb' }));
 
-// ---------- Connection helpers ----------
-function buildConfig({ server, database, username, password, authType, port = 1433 }) {
+/* ---------------------- Connection helpers ------------------------ */
+function buildConfig({
+  server,
+  database,
+  username,
+  user,
+  password,
+  authType,
+  port = 1433,
+  instanceName,
+}) {
   if (!server) throw new Error('server is required');
+
+  const login = username ?? user;
+  const mode = (authType || 'sql').toLowerCase();
+
+  // Note: Windows auth generally doesn't work on Linux hosts like Render
+  if (mode === 'windows') {
+    throw new Error("Windows authentication isn't supported on this host; use SQL authentication");
+  }
+  if (!login || !password) {
+    throw new Error("username and password are required for 'sql' authentication");
+  }
+
   const cfg = {
     server,
-    database: database || 'master',
-    port: Number.parseInt(port, 10) || 1433,
+    database: (database || 'master').trim(),
     options: {
-      encrypt: false,               // set true if your SQL requires TLS
-      trustServerCertificate: true, // fine for many on-prem/dev SQL
+      encrypt: true,                 // many public hosts require TLS
+      trustServerCertificate: true,  // OK for demos/self-signed; set false with real certs
       enableArithAbort: true,
-      connectTimeout: 30000,
+      connectTimeout: 45000,         // give networks a bit more time
       requestTimeout: 30000,
     },
     pool: { max: 5, min: 0, idleTimeoutMillis: 30000 },
+    user: login,
+    password: password,
   };
-  if (authType === 'windows') {
-    // Usually not usable on Linux hosts like Render
-    cfg.options.trustedConnection = true;
+
+  // Support named instances (e.g., server\SQLEXPRESS); omit port when instanceName is present
+  if (instanceName && String(instanceName).trim()) {
+    cfg.options.instanceName = String(instanceName).trim();
   } else {
-    cfg.user = username;
-    cfg.password = password;
+    cfg.port = Number.parseInt(port, 10) || 1433;
   }
+
   return cfg;
 }
 
@@ -75,28 +102,36 @@ async function withPool(cfg, fn) {
   }
 }
 
-// ---------- Routes ----------
+/* ----------------------------- Routes ----------------------------- */
+// Favicons (optional)
 app.get('/favicon.ico', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'favicon.ico'));
 });
-
 app.get('/favicon.svg', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'favicon.svg'));
 });
 
+// Health
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
+// Test connection + list DBs & tables
 app.post('/api/database/test-connection', async (req, res) => {
   try {
+    // Helpful debug (masked) – comment out later if you want
+    const { password, ...rest } = req.body || {};
+    console.log('test-connection body:', { ...rest, password: password ? '***' : undefined });
+
     const cfg = buildConfig(req.body || {});
     const info = await withPool(cfg, async (pool) => {
+      // list non-system databases
       const dbResult = await pool.request().query(`
         SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name
       `);
       const databases = dbResult.recordset.map(r => r.name);
 
+      // list tables (prefer requested DB; fallback to current DB)
       let tables = [];
       try {
         if (cfg.database && cfg.database !== 'master') {
@@ -142,6 +177,7 @@ app.post('/api/database/test-connection', async (req, res) => {
   }
 });
 
+// Execute query
 app.post('/api/database/execute-query', async (req, res) => {
   try {
     const { connection, query } = req.body || {};
@@ -164,7 +200,7 @@ app.post('/api/database/execute-query', async (req, res) => {
   }
 });
 
-// ---------- Start ----------
+/* ----------------------------- Start ----------------------------- */
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
