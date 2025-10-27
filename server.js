@@ -211,16 +211,16 @@ app.post('/api/database/test-connection', async (req, res) => {
       return { databases, tables };
       });
 
-      res.json({
+      return res.json({
         success: true,
         databases: info.databases,
         tables: info.tables,
         connectionId: `${cfg.server}_${cfg.database || 'master'}_${Date.now()}`
       });
-  } catch (error) {
-    console.error('Database connection error:', error);
-    res.status(400).json({ success: false, message: error.message || 'Failed to connect to database' });
-  }
+    } catch (error) {
+      console.error('Database connection error:', error);
+      return res.status(400).json({ success: false, message: error.message || 'Failed to connect to database' });
+    }
 });
 
 // Execute query
