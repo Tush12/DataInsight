@@ -1,7 +1,11 @@
-builds:
+services:
   - type: web
     name: datainsight-backend
     env: node
-    buildCommand: npm install --prefix server
-    startCommand: node server/server.js
-    root: server
+    buildCommand: npm install
+    startCommand: npm run server
+    envVars:
+      - key: NODE_VERSION
+        value: 20.x
+      - key: NPM_CONFIG_PRODUCTION
+        value: 'false'
