@@ -1,0 +1,7 @@
+builds:
+  - type: web
+    name: datainsight-backend
+    env: node
+    buildCommand: npm install --prefix server
+    startCommand: node server/server.js
+    root: server
