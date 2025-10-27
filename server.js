@@ -5,6 +5,7 @@
 import express from 'express';
 import cors from 'cors';
 import sql from 'mssql';
+import { Pool } from 'pg';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -119,12 +120,57 @@ app.get('/api/health', (_req, res) => {
 // Test connection + list DBs & tables
 app.post('/api/database/test-connection', async (req, res) => {
   try {
-    // Helpful debug (masked) – comment out later if you want
-    const { password, ...rest } = req.body || {};
-    console.log('test-connection body:', { ...rest, password: password ? '***' : undefined });
+    const { password, dbType = 'mssql', ...rest } = req.body || {};
+    console.log('test-connection body:', { ...rest, dbType, password: password ? '***' : undefined });
 
-    const cfg = buildConfig(req.body || {});
-    const info = await withPool(cfg, async (pool) => {
+    if (dbType === 'postgres') {
+      // Handle PostgreSQL connection
+      const pool = new Pool({
+        host: req.body.server,
+        port: req.body.port || 5432,
+        database: req.body.database,
+        user: req.body.user || req.body.username,
+        password: req.body.password,
+        ssl: {
+          rejectUnauthorized: false // For self-signed certificates
+        }
+      });
+
+      try {
+        const dbResult = await pool.query("SELECT datname FROM pg_database WHERE datistemplate = false AND datname NOT IN ('postgres', 'template1', 'template0')");
+        const dbs = dbResult.rows.map(r => r.datname);
+        
+        let tables = [];
+        if (req.body.database) {
+          const tablesResult = await pool.query(`
+            SELECT table_schema, table_name 
+            FROM information_schema.tables 
+            WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+            ORDER BY table_schema, table_name
+          `);
+          tables = tablesResult.rows.map(r => ({
+            name: r.table_name,
+            schema: r.table_schema,
+            fullName: `${r.table_schema}.${r.table_name}`
+          }));
+        }
+
+        return res.json({
+          success: true,
+          databases: dbs,
+          tables: tables,
+          connectionId: `${req.body.server}_${req.body.database || 'postgres'}_${Date.now()}`
+        });
+      } catch (error) {
+        console.error('PostgreSQL error:', error);
+        return res.status(400).json({ success: false, message: error.message });
+      } finally {
+        await pool.end();
+      }
+    } else {
+      // Original SQL Server logic
+      const cfg = buildConfig(req.body || {});
+      const info = await withPool(cfg, async (pool) => {
       // list non-system databases
       const dbResult = await pool.request().query(`
         SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name
@@ -163,14 +209,14 @@ app.post('/api/database/test-connection', async (req, res) => {
       }
 
       return { databases, tables };
-    });
+      });
 
-    res.json({
-      success: true,
-      databases: info.databases,
-      tables: info.tables,
-      connectionId: `${cfg.server}_${cfg.database || 'master'}_${Date.now()}`
-    });
+      res.json({
+        success: true,
+        databases: info.databases,
+        tables: info.tables,
+        connectionId: `${cfg.server}_${cfg.database || 'master'}_${Date.now()}`
+      });
   } catch (error) {
     console.error('Database connection error:', error);
     res.status(400).json({ success: false, message: error.message || 'Failed to connect to database' });
