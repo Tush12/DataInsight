@@ -171,25 +171,35 @@ app.post('/api/database/test-connection', async (req, res) => {
       // Original SQL Server logic
       const cfg = buildConfig(req.body || {});
       const info = await withPool(cfg, async (pool) => {
-      // list non-system databases
-      const dbResult = await pool.request().query(`
-        SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name
-      `);
-      const databases = dbResult.recordset.map(r => r.name);
+        // list non-system databases
+        const dbResult = await pool.request().query(`
+          SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name
+        `);
+        const databases = dbResult.recordset.map(r => r.name);
 
-      // list tables (prefer requested DB; fallback to current DB)
-      let tables = [];
-      try {
-        if (cfg.database && cfg.database !== 'master') {
-          const t = await pool.request().query(`
-            USE [${cfg.database}];
-            SELECT TABLE_SCHEMA, TABLE_NAME, CONCAT(TABLE_SCHEMA,'.',TABLE_NAME) AS FULL_NAME
-            FROM INFORMATION_SCHEMA.TABLES
-            WHERE TABLE_TYPE='BASE TABLE'
-            ORDER BY TABLE_SCHEMA, TABLE_NAME
-          `);
-          tables = t.recordset.map(r => ({ name: r.TABLE_NAME, schema: r.TABLE_SCHEMA, fullName: r.FULL_NAME }));
-        } else {
+        // list tables (prefer requested DB; fallback to current DB)
+        let tables = [];
+        try {
+          if (cfg.database && cfg.database !== 'master') {
+            const t = await pool.request().query(`
+              USE [${cfg.database}];
+              SELECT TABLE_SCHEMA, TABLE_NAME, CONCAT(TABLE_SCHEMA,'.',TABLE_NAME) AS FULL_NAME
+              FROM INFORMATION_SCHEMA.TABLES
+              WHERE TABLE_TYPE='BASE TABLE'
+              ORDER BY TABLE_SCHEMA, TABLE_NAME
+            `);
+            tables = t.recordset.map(r => ({ name: r.TABLE_NAME, schema: r.TABLE_SCHEMA, fullName: r.FULL_NAME }));
+          } else {
+            const t = await pool.request().query(`
+              SELECT TABLE_SCHEMA, TABLE_NAME, CONCAT(TABLE_SCHEMA,'.',TABLE_NAME) AS FULL_NAME
+              FROM INFORMATION_SCHEMA.TABLES
+              WHERE TABLE_TYPE='BASE TABLE'
+              ORDER BY TABLE_SCHEMA, TABLE_NAME
+            `);
+            tables = t.recordset.map(r => ({ name: r.TABLE_NAME, schema: r.TABLE_SCHEMA, fullName: r.FULL_NAME }));
+          }
+        } catch (error) {
+          console.error('Error fetching tables:', error);
           const t = await pool.request().query(`
             SELECT TABLE_SCHEMA, TABLE_NAME, CONCAT(TABLE_SCHEMA,'.',TABLE_NAME) AS FULL_NAME
             FROM INFORMATION_SCHEMA.TABLES
@@ -198,17 +208,8 @@ app.post('/api/database/test-connection', async (req, res) => {
           `);
           tables = t.recordset.map(r => ({ name: r.TABLE_NAME, schema: r.TABLE_SCHEMA, fullName: r.FULL_NAME }));
         }
-      } catch {
-        const t = await pool.request().query(`
-          SELECT TABLE_SCHEMA, TABLE_NAME, CONCAT(TABLE_SCHEMA,'.',TABLE_NAME) AS FULL_NAME
-          FROM INFORMATION_SCHEMA.TABLES
-          WHERE TABLE_TYPE='BASE TABLE'
-          ORDER BY TABLE_SCHEMA, TABLE_NAME
-        `);
-        tables = t.recordset.map(r => ({ name: r.TABLE_NAME, schema: r.TABLE_SCHEMA, fullName: r.FULL_NAME }));
-      }
 
-      return { databases, tables };
+        return { databases, tables };
       });
 
       return res.json({
@@ -217,10 +218,15 @@ app.post('/api/database/test-connection', async (req, res) => {
         tables: info.tables,
         connectionId: `${cfg.server}_${cfg.database || 'master'}_${Date.now()}`
       });
-    } catch (error) {
-      console.error('Database connection error:', error);
-      return res.status(400).json({ success: false, message: error.message || 'Failed to connect to database' });
     }
+  } catch (error) {
+    console.error('Database connection error:', error);
+    return res.status(400).json({ 
+      success: false, 
+      message: error.message || 'Failed to connect to database',
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
 });
 
 // Execute query
